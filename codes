@@ -903,3 +903,286 @@ color:#ff4500;
 
 
       
+
+user_auth
+controllers:
+authController
+<?php
+
+namespace App\Http\Controllers;
+
+use Illuminate\Http\Request;
+use App\Http\Requests\userRequest;
+use App\Http\Requests\adminRequest;
+use App\Models\User;
+use Illuminate\Support\Facades\Hash;
+use Illuminate\Support\Facades\Auth;
+use Illuminate\Support\Facades\Session;
+
+class authController extends Controller
+{
+    public function loadRegister(){
+        if(Auth::user() && Auth::user()->is_admin == 1){
+            return redirect('/admin/dashboard');
+        }
+        else if(Auth::user() && Auth::user()->is_admin == 0){
+            return redirect('/dashboard');
+        }
+        return view('register');
+    }
+
+    public function userRegister(userRequest $request){
+        $request->validated();
+        $user = new User;
+        $user->name = $request->name;
+        $user->email = $request->email;
+        $user->password = Hash::make($request->password);
+        $user->save();
+
+        $loginRoute = route('login');
+        return response()->json(['res'=>'User Registration Successful!','redirect' => $loginRoute]);
+    }
+
+    public function loadLogin(){
+        if(Auth::user() && Auth::user()->is_admin == 1){
+            return redirect('/admin/dashboard');
+        }
+        else if(Auth::user() && Auth::user()->is_admin == 0){
+            return redirect('/dashboard');
+        }
+        return view('/login');
+    }
+
+    public function userLogin(adminRequest $request){
+        $request->validated();
+        $user = $request ->only('email','password');
+        if(Auth::attempt($user)){
+            if(Auth::user()->is_admin == 1){
+                return response()->json(['redirect'=>'/admin/dashboard']);
+            }
+            else{
+                return response()->json(['redirect'=>'/dashboard']);
+            }
+        }
+        else{
+            return response()->json(['error'=>'Email or Password is incorrect']);
+        }
+    }
+
+    public function loadDashboard(){
+        return view('user.user_dashboard');
+    }
+
+    public function adminDashboard(){
+        return view('admin.dashboard');
+    }
+
+    public function logout(Request $request){
+        $request->session()->flush();
+        Auth::logout();
+        return redirect('/login');
+    }
+}
+
+
+middlware:
+admin:
+ public function handle(Request $request, Closure $next): Response
+    {
+        if(auth()->user() && auth()->user()->is_admin == 1){
+            return $next($request);
+        }
+        return redirect('/');
+    }
+
+user:
+ if(auth()->user() && auth()->user()->is_admin == 0){
+            return $next($request);
+        }
+        return redirect('/');
+}
+
+Routes:
+<?php
+
+use Illuminate\Support\Facades\Route;
+use App\Http\Controllers\authController;
+
+Route::get('/', function () {
+    return view('welcome');
+});
+
+Route::get('/register',[authController::class,'loadRegister']);
+Route::post('/register',[authController::class,'userRegister'])->name('userRegister');
+
+Route::get('/login',function(){
+    return redirect('/');
+})->name('login');
+Route::get('/',[authController::class,'loadLogin'])->name('login');
+Route::post('/login',[authController::class,'userLogin'])->name('userLogin');
+
+Route::get('/logout',[authController::class,'logout']);
+
+
+Route::group(['middleware' => ['web','checkAdmin']],function(){
+    Route::get('/admin/dashboard',[authController::class,'adminDashboard']);
+});
+
+
+Route::group(['middleware' => ['web','checkUser']],function(){
+    Route::get('/dashboard',[authController::class,'loadDashboard']);
+});
+
+Route::get('/register',function(){
+    return view('register');
+})->name('register');
+
+
+
+
+Multi_auth:
+controller
+Admin:
+<?php
+
+namespace App\Http\Controllers;
+
+use App\Http\Requests\loginRequest;
+use Illuminate\Support\Facades\Auth;
+
+class AdminController extends Controller
+{
+    public function authenticate(loginRequest $request){
+        $request->validated();
+        if(Auth::guard('admin')->attempt(['email' => $request->email, 'password' => $request->password],$request->filled('remember'))){
+            return redirect()->route('admin.dashboard');
+        }
+        else{
+            return back()->withInput($request->only('email'))->with('error','Invalid Email or Password');
+        }
+    }
+
+    public function logout(){
+        Auth::guard('admin')->logout();
+        return redirect()->route('admin.login');
+    }
+}
+
+
+user:
+<?php
+
+namespace App\Http\Controllers;
+use App\Models\User;
+use Illuminate\Support\Facades\Hash;
+use Illuminate\Support\Facades\Auth;
+use Illuminate\Http\Request;
+use App\Http\Requests\loginRequest;
+use App\Http\Requests\userRequest;
+
+class UserController extends Controller
+{
+    public function Register(userRequest $request){
+        $request->validated();
+        $user = new User;
+        $user->name = $request->name;
+        $user->email = $request->email;
+        $user->password = Hash::make($request->password);
+        $user->save();
+        return redirect('login');
+    }
+
+    public function userAuthenticate(loginRequest $request){
+        $request->validated();
+        if(Auth::guard('web')->attempt(['email'=>$request->email, 'password'=>$request->password], $request->filled('remember'))){
+            return redirect()->route('user.dashboard');
+        }
+        else{
+            return back()->withInput($request->only('email'))->with('error','Invalid Email or Password');
+        }
+    }
+
+    public function logout(){
+        Auth::guard('web')->logout();
+        return redirect()->route('login');
+    }
+}
+
+
+
+Routes:
+<?php
+
+use Illuminate\Support\Facades\Route;
+use App\Http\Controllers\AdminController;
+use App\Http\Controllers\DashboardController;
+use App\Http\Controllers\UserDashboardController;
+use App\Http\Controllers\UserController;
+
+/*
+|--------------------------------------------------------------------------
+| Web Routes
+|--------------------------------------------------------------------------
+|
+| Here is where you can register web routes for your application. These
+| routes are loaded by the RouteServiceProvider within a group which
+| contains the "web" middleware group. Now create something great!
+|
+*/
+
+Route::get('/', function () {
+    return view('welcome');
+});
+
+Route::group(['prefix' => 'admin'], function(){
+    Route::group(['middleware'=>['admin.guest','prevent-back-history']],function(){
+        Route::view('/login','admin.login')->name('admin.login');
+        Route::post('/login',[AdminController::class,'authenticate'])->name('admin.auth');
+    });
+    Route::group(['middleware'=>['admin.auth','prevent-back-history']],function(){
+        Route::get('/dashboard',[DashboardController::class,'dashboard'])->name('admin.dashboard');
+        Route::get('/logout',[AdminController::class,'logout'])->name('admin.logout');
+    });
+});
+
+
+Route::group(['middleware'=>['guest','prevent-back-history']],function(){
+    Route::view('/login','user.login')->name('login');
+    Route::post('/login',[UserController::class,'userAuthenticate'])->name('user.auth');
+});
+Route::group(['middleware'=>['auth','prevent-back-history']],function(){
+    Route::get('/dashboard',[UserDashboardController::class,'userDashboard'])->name('user.dashboard');
+    Route::get('/logout',[UserController::class,'logout'])->name('logout');
+});
+
+
+Route::group(['middleware'=>'guest'],function(){
+    Route::view('/register','user.register')->name('register');
+    Route::post('/register',[UserController::class,'Register'])->name('register');
+});
+
+
+AdminAuthenticate:
+protected function redirectTo($request)
+    {
+        if (! $request->expectsJson()) {
+            return route('admin.login');
+        }
+    }
+
+    protected function authenticate($request, array $guards){
+        if($this->auth->guard('admin')->check()){
+            return $this->auth->shouldUse('admin');
+        }
+        $this->unauthenticated($request, ['admin']);
+    }
+
+
+AdminRedirectIfAuthenticated:
+public function handle(Request $request, Closure $next, ...$guards)
+    {
+            if (Auth::guard('admin')->check()) {
+                return redirect()->route('admin.dashboard');
+            }
+            return $next($request);
+    }
