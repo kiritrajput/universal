@@ -1,0 +1,905 @@
+Controller
+<?php
+namespace App\Http\Controllers;
+use Illuminate\Http\Request;
+use App\Models\User;
+use Illuminate\Support\Facades\Storage;
+use App\Http\Requests\dataRequest;
+use Illuminate\Support\Facades\Hash;
+use Intervention\Image\Facades\Image as Image;
+
+class laravelController extends Controller
+{
+    public function getData(Request $request)
+    {
+        $searchTerm = $request->input('search.value');
+        $query = User::query();
+        if ($searchTerm) {
+            $query->where('name', 'like', '%' . $searchTerm . '%')
+                ->orWhere('email', 'like', '%' . $searchTerm . '%')
+                ->orWhere('hobbies', 'like', '%' . $searchTerm . '%')
+                ->orWhere('gender', 'like', '%' . $searchTerm . '%')
+                ->orWhere('country', 'like', '%' . $searchTerm . '%')
+                ->orWhere('age', 'like', '%' . $searchTerm . '%')
+                ->orWhere('phone', 'like', '%' . $searchTerm . '%')
+                ->orWhere('birth', 'like', '%' . $searchTerm . '%')
+                ->orWhere('time', 'like', '%' . $searchTerm . '%');
+        }
+
+        $orderColumn = $request->input('order.0.column');
+        $orderDirection = $request->input('order.0.dir', 'asc');
+        $orderableColumns = [
+            'id', 'name', 'email', 'phone', 'age', 'hobbies', 'gender', 'country', 'image', 'birth', 'time',
+        ];
+        $orderColumn = $orderableColumns[$orderColumn] ?? 'id';
+
+        if (!$request->input('order.0.column') && !$request->input('order.0.dir')) {
+            $orderDirection = 'asc';
+        }
+
+        $query->orderBy($orderColumn, $orderDirection);
+        $totalRecords = $query->count();
+        $start = $request->input('start', 0);
+        $length = $request->input('length', 5);
+        $query->offset($start)->limit($length);
+        $users = $query->get();
+
+        if ($users->count() > 0) {
+            return response()->json([
+                'draw' => $request->input('draw', 1),
+                'recordsTotal' => $totalRecords,
+                'recordsFiltered' => $totalRecords,
+                'message' => "Data Found",
+                'code' => 200,
+                'data' => $users
+            ]);
+        } else {
+            return response()->json([
+                'message' => 'Error! Data not found',
+                'code' => 500
+            ]);
+        }
+    }
+
+    public function addOrUpdateData(dataRequest $request)
+    {
+        $request->validated();
+        $id = $request->id;
+        $user = $id ? User::find($id) : new User;
+
+        if (!$user && $id) {
+            return response()->json(['error' => 'User not found.'], 404);
+        }
+
+        $user->name = $request->name;
+        $user->email = $request->email;
+        $user->phone = $request->phone;
+        $user->age = $request->age;
+        $user->hobbies = implode(', ', $request->hobbies);
+        $user->gender = $request->gender;
+        $user->country = $request->country;
+        $user->birth = $request->birth;
+        $user->time = $request->time;
+        $user->location = $request->location;
+
+        if ($request->has('password') && !empty($request->password)) {
+            $user->password = Hash::make($request->password);
+        }
+
+        if ($request->filled('lat') && $request->filled('lng')) {
+            $user->lat = $request->lat;
+            $user->lng = $request->lng;
+        } elseif (!$request->filled('lat') && !$request->filled('lng') && $id) {
+            $user->lat = $user->lat;
+            $user->lng = $user->lng;
+        }
+
+        if ($request->hasFile('image')) {
+            if ($user->image) {
+                Storage::delete('public/img/' . $user->image);
+            }
+
+            $tempName = rand(1111111111, 999999999);
+            $originalExtension = $request->file('image')->getClientOriginalExtension();
+            $randomImageFilename = $tempName . '.' . $originalExtension;
+            $filePath = $request->file('image')->storeAs('img', $randomImageFilename, 'public');
+            $user->image = $randomImageFilename;
+
+            $img = Image::make(storage_path('app/public/' . $filePath));
+            $img->resize(300, 200);
+            $img->save(storage_path('app/public/uploads/' . $randomImageFilename));
+        }
+
+        $user->save();
+        return response()->json(['res' => 'Data ' . ($id ? 'updated' : 'added') . ' successfully']);
+    }
+
+
+    public function delete(Request $request){
+        $id = $request->id;
+        $user = User::find($id);
+
+        if (!$user) {
+            return response()->json(['error' => 'User not found.'], 404);
+        }
+
+        if (Storage::delete('public/img/' . $user->image)) {
+            $user->delete();
+            return response()->json(['message' => 'Record deleted successfully']);
+        } else {
+            return response()->json(['error' => 'Error deleting record.'], 500);
+        }
+    }
+
+    public function getUsers($id){
+        $user = User::where('id',$id)->get();
+        return view('main',['user'=>$user]);
+    }
+}
+
+
+routes:
+              <?php
+
+use Illuminate\Support\Facades\Route;
+use App\Http\Controllers\laravelController;
+
+/*
+|--------------------------------------------------------------------------
+| Web Routes
+|--------------------------------------------------------------------------
+|
+| Here is where you can register web routes for your application. These
+| routes are loaded by the RouteServiceProvider within a group which
+| contains the "web" middleware group. Now create something great!
+|
+*/
+
+Route::get('/', function () {
+    return view('welcome');
+});
+
+Route::get('/form',function(){
+    return view('main');
+})->name('form');
+
+Route::post('form',[laravelController::class,'addOrUpdateData'])->name('formData');
+
+
+Route::get('/get-data',function(){
+    return view('fetch');
+});
+
+Route::post('/get-data',function(){
+    return view('fetch');
+});
+
+Route::get('/get-all-data',[laravelController::class,'getData'])->name('fetchData');
+
+Route::get('/delete',[laravelController::class,'delete'])->name('deleteData');
+
+Route::get('form/{id}',[laravelController::class,'getUsers']);
+
+
+
+Main
+
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<!--API key - AIzaSyBnIgr4y3Kv7ycTsaPX9q3n-5BGF6g7a_Q-->
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Laravel Crud with Ajax</title>
+    <script src="https://code.jquery.com/jquery-3.7.1.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/sweetalert2@11"></script>
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/css/bootstrap.min.css" rel="stylesheet" integrity="sha384-QWTKZyjpPEjISv5WaRU9OFeRpok6YctnYmDr5pNlyT2bRjXh0JMhjY6hW+ALEwIH" crossorigin="anonymous">
+
+    <style>
+        @import url('https://fonts.googleapis.com/css2?family=Poppins:wght@300;400;500;600;700;800;900&display=swap');
+* {
+    margin: 0;
+    padding: 0;
+    box-sizing: border-box;
+    font-family: 'Poppins', sans-serif;
+}
+body{
+        display: flex;
+        justify-content: center;
+        align-items: center;
+        min-height: 100vh;
+        background: url('{{ asset("storage/img/bg.jpg") }}') no-repeat;
+        background-size: cover;
+        background-position: center;
+}
+.wrapper{
+    width: 680px;
+    background: transparent;
+    border: 2px solid rgba(255, 255, 255, .2);
+    backdrop-filter: blur(9px);
+    color: #fff;
+    border-radius: 12px;
+    padding: 30px 40px;
+}
+.wrapper h1{
+font-size: 36px;
+text-align: center;
+}
+#myForm{
+margin-top:32px;
+}
+.input-box input{
+background: transparent;
+border: none;
+outline: none;
+border: 2px solid rgba(255, 255, 255, .2);
+border-radius: 16px;
+font-size: 16px;
+color: #fff;
+padding:10px;
+}
+.input-box input::placeholder{
+color: #fff;
+}
+.glow-on-hover {
+width: 186px;
+height: 50px;
+border: none;
+outline: none;
+color: #fff;
+background: #111;
+cursor: pointer;
+position: relative;
+z-index: 0;
+border-radius: 10px;
+}
+
+.glow-on-hover:before {
+content: '';
+background: linear-gradient(45deg, #ff0000, #ff7300, #fffb00, #48ff00, #00ffd5, #002bff, #7a00ff, #ff00c8, #ff0000);
+position: absolute;
+top: -2px;
+left:-2px;
+background-size: 400%;
+z-index: -1;
+filter: blur(5px);
+width: calc(100% + 4px);
+height: calc(100% + 4px);
+animation: glowing 20s linear infinite;
+opacity: 0;
+transition: opacity .3s ease-in-out;
+border-radius: 10px;
+}
+
+.glow-on-hover:active {
+color: #000
+}
+
+.glow-on-hover:active:after {
+background: transparent;
+}
+
+.glow-on-hover:hover:before {
+opacity: 1;
+}
+
+.glow-on-hover:after {
+z-index: -1;
+content: '';
+position: absolute;
+width: 100%;
+height: 100%;
+background: #111;
+left: 0;
+top: 0;
+border-radius: 10px;
+}
+
+@keyframes glowing {
+0% { background-position: 0 0; }
+50% { background-position: 400% 0; }
+100% { background-position: 0 0; }
+}
+.error{
+color:#ff4500;
+}
+</style>
+</head>
+<body>
+    <div class="wrapper">
+    <h1>{{isset($user) ? 'Edit Data' : 'Add Data'}}</h1>
+    <form method="post" id="myForm">
+        @csrf
+        <input type="hidden" name="id" value="{{isset($user) ? $user[0]->id : ''}}">
+    <div class="row mb-3">
+        <div class="input-box col-md-6">
+            <div class="form-floating mb-3 mb-md-0">
+                <input type="text" name="name" placeholder="Enter your name" value="{{isset($user) ? $user[0]->name : ''}}" class="form-control" id="inputUsername">
+                <label for="inputUsername">Username</label>
+            </div>
+            @error('name')
+                <div class="error">{{$message}}</div>
+            @enderror
+        </div>
+        <div class="input-box col-md-6">
+            <div class="form-floating">
+                <input type="email" name="email" placeholder="Enter your email" value="{{isset($user) ? $user[0]->email : ''}}" class="form-control" id="inputEmail">
+                <label for="inputEmail">Email</label>
+            </div>
+            @error('email')
+                <div class="error">{{$message}}</div>
+            @enderror
+        </div>
+    </div>
+
+<div class="row mb-4">
+    <div class="input-box col-md-6">
+        <div class="form-floating mb-3 mb-md-0">
+            <input type="text" name="phone" placeholder="Enter your number" value="{{isset($user) ? $user[0]->phone : ''}}" class="form-control" id="inputNumber">
+            <label for="inputNumber">Phone</label>
+        </div>
+        @error('phone')
+                <div class="error">{{$message}}</div>
+            @enderror
+    </div>
+    <div class="input-box col-md-6">
+        <div class="form-floating mb-3 mb-md-0">
+            <input type="number" name="age" placeholder="Enter your age" value="{{isset($user) ? $user[0]->age : ''}}" class="form-control" id="inputAge">
+            <label for="inputAge">Age</label>
+        </div>
+        @error('age')
+                <div class="error">{{$message}}</div>
+        @enderror
+    </div>
+</div>
+
+<div class="mb-4">
+    <div class="input-box">
+    <div class="error-container"></div>
+        <input type="checkbox" name="hobbies[]" value="cricket" {{ isset($user) && in_array('cricket', explode(', ', $user[0]->hobbies)) ? 'checked' : '' }} id="hobbyCricket">
+        <label for="hobbyCricket">Cricket</label>
+
+        <input type="checkbox" name="hobbies[]" value='badminton' {{ isset($user) && in_array('badminton', explode(', ', $user[0]->hobbies)) ? 'checked' : '' }} id="hobbyBadminton">
+        <label for="hobbyBadminton">Badminton</label>
+
+        <input type="checkbox" name="hobbies[]" value='hockey' {{ isset($user) && in_array('hockey', explode(', ', $user[0]->hobbies)) ? 'checked' : '' }} id="hobbyHockey">
+        <label for="hobbyHockey">Hockey</label>
+
+        <input type="checkbox" name="hobbies[]" value='chess' {{ isset($user) && in_array('chess', explode(', ', $user[0]->hobbies)) ? 'checked' : '' }} id="hobbyChess">
+        <label for="hobbyChess">Chess</label>
+    </div>
+    @error('hobbies')
+        <span class="error">{{$message}}</span>
+    @enderror
+</div>
+
+<div class="mb-4">
+    <div class="input-box form-check-inline">
+    <div class="error-container"></div>
+        <input type="radio" name="gender" value="male" {{isset($user) && $user[0]->gender == 'male' ? 'checked' : ''}} class="form-check-input" id="genderMale">
+        <label for="genderMale" class="form-check-label">Male</label>
+    </div>
+    <div class="input-box form-check-inline">
+        <input type="radio" name="gender" value="female" {{isset($user) && $user[0]->gender == 'female' ? 'checked' : ''}} class="form-check-input" id="genderFemale">
+        <label for="genderFemale" class="form-check-label">Female</label>
+    </div>
+    @error('gender')
+        <span class="error">{{$message}}</span>
+    @enderror
+</div>
+
+
+    <div class="input-box mb-3">
+        <select name="country" id="country" style="background-color:rgba(255,255,255,0.03);border-radius:10px;padding:8px;width:38%; border: 2px solid rgba(255, 255, 255, .2);">
+            <option value="" selected>Select a country</option>
+            <option value="India" {{isset($user) && $user[0]->country == 'India'?'selected':''}}>India</option>
+            <option value="Usa" {{isset($user) && $user[0]->country == 'Usa'?'selected':''}}>Usa</option>
+            <option value="Africa" {{isset($user) && $user[0]->country == 'Africa'?'selected':''}}>Africa</option>
+            <option value="Russia" {{isset($user) && $user[0]->country == 'Russia'?'selected':''}}>Russia</option>
+            <option value="Japan" {{isset($user) && $user[0]->country == 'Japan'?'selected':''}}>Japan</option>
+        </select>
+        @error('country')
+            <span class="error">{{$message}}</span>
+        @enderror
+    </div>
+
+
+    <div class="input-box form-floating {{isset($user) ? 'mb-2' : 'mb-3'}}">
+        <input type="file" name="image" id="inputImage" class="form-control-file">
+    </div>
+        @isset($user)
+        <div class="{{isset($user) ? 'mb-2' : ''}}">
+            <img src="{{asset('storage/img/')}}/{{$user[0]->image}}" alt="image.jpg" width="80" height="80" style="border-radius:7px;" name="image"/>
+        </div>
+        @endisset
+
+
+        <div class="row mb-3">
+            <div class="input-box col-md-6">
+                <div class="form-floating mb-3 mb-md-0">
+                    <input type="date" name="birth" value="{{isset($user) ? $user[0]->birth : ''}}" id="inputBirth" class="form-control">
+                </div>
+                @error('birth')
+                <div class="error">{{$message}}</div>
+            @enderror
+            </div>
+            <div class="input-box col-md-6">
+                <div class="form-floating mb-3 mb-md-0">
+                    <input type="time" name="time" value="{{isset($user) ? $user[0]->time : ''}}" class="form-control">
+                </div>
+                @error('time')
+                <div class="error">{{$message}}</div>
+            @enderror
+            </div>
+        </div>
+    <div class="row">
+        <div class="input-box col-md-6">
+            <div class="form-floating mb-3 mb-md-0">
+                <input type="password" name="password"  placeholder="Enter password" class="form-control" id="inputPassword">
+                <label for="inputPassword">Password</label>
+            </div>
+            @error('password')
+                    <div class="error">{{$message}}</div>
+            @enderror
+        </div>
+        <div class="input-box col-md-6">
+            <div class="form-floating">
+                <input type="text" name="location" value="{{isset($user)? $user[0]->location:''}}" class="form-control" id="inputLocation" placeholder="Enter location">
+                <label for="inputLocation">Location</label>
+            </div>
+            @error('location')
+                <div class="error">{{$message}}</div>
+            @enderror
+        </div>
+        <input type="hidden" id="latitude" name="lat">
+        <input type="hidden" id="longitude" name="lng">
+</div>
+@isset($user)
+<div class="container mt-3 mb-4" id="map" style="height:220px;width:434px;border-radius:4px;"></div>
+<script>
+   document.addEventListener('DOMContentLoaded', function () {
+        var storedLat = parseFloat('{{ $user[0]->lat }}');
+        var storedLng = parseFloat('{{ $user[0]->lng }}');
+        if (!isNaN(storedLat) && !isNaN(storedLng)) {
+            updateMap(storedLat, storedLng);
+            document.getElementById("map").style.display = "block";
+        }
+    });
+</script>
+@endisset
+<div class="container mt-3 mb-4" id="map" style="height:220px;width:434px;border-radius:4px;display:none;"></div>
+    <div>
+        <button type="submit" name="submit"  id="btnSubmit" style="display:block;margin:auto;color:#fff;" class="glow-on-hover mt-4">{{isset($user) ? 'Edit' : 'Submit'}}</button>
+    </div>
+        </form>
+    </div>
+    <script src="https://maps.googleapis.com/maps/api/js?key=AIzaSyBlBTQzvBudM_ydhSW2cVpLuBoCn-hIjkA&libraries=places&v=weekly&callback=autoLocation" defer></script>
+    <script>
+    function autoLocation() {
+        var id = 'inputLocation';
+        let autocomplete = new google.maps.places.Autocomplete((document.getElementById(id)), {
+            types: ['geocode'],
+        });
+
+        google.maps.event.addListener(autocomplete, 'place_changed', function () {
+            var near_place = autocomplete.getPlace();
+            jQuery("#latitude").val(near_place.geometry.location.lat());
+            jQuery("#longitude").val(near_place.geometry.location.lng());
+            var firstLetter = near_place.name.charAt(0).toUpperCase();
+            updateMap(parseFloat(near_place.geometry.location.lat()), parseFloat(near_place.geometry.location.lng()), firstLetter);
+            document.getElementById("map").style.display = "block";
+        });
+
+        var initialLatitude = parseFloat(jQuery("#latitude").val());
+        var initialLongitude = parseFloat(jQuery("#longitude").val());
+        if (!isNaN(initialLatitude) && !isNaN(initialLongitude)) {
+            var initialLocation = document.getElementById(id).value;
+            var firstLetter = initialLocation.charAt(0).toUpperCase();
+            updateMap(initialLatitude, initialLongitude, firstLetter);
+            document.getElementById("map").style.display = "block";
+        }
+    }
+
+    function updateMap(latitude, longitude, label) {
+        var map = new google.maps.Map(document.getElementById("map"), {
+            center: { lat: latitude, lng: longitude },
+            zoom: 8,
+        });
+
+        var marker = new google.maps.Marker({
+            position: { lat: latitude, lng: longitude },
+            map: map,
+            label: label,
+            title: document.getElementById('inputLocation').value,
+            draggable: true,
+            animation: google.maps.Animation.DROP
+        });
+
+        google.maps.event.addListener(marker, 'dragend', function (event) {
+        var newLatitude = event.latLng.lat();
+        var newLongitude = event.latLng.lng();
+
+        document.getElementById("latitude").value = newLatitude;
+        document.getElementById("longitude").value = newLongitude;
+
+        var geocoder = new google.maps.Geocoder();
+        var latLng = new google.maps.LatLng(newLatitude, newLongitude);
+
+        geocoder.geocode({ 'latLng': latLng }, function (results, status) {
+            if (status == google.maps.GeocoderStatus.OK) {
+                if (results[0]) {
+                    document.getElementById('inputLocation').value = results[0].formatted_address;
+                }
+            }
+        });
+    });
+    }
+    </script>
+    <script>
+    $(document).ready(function(){
+        $.validator.addMethod("lettersAndCharacters", function (value, element) {
+            return this.optional(element) || /^[a-zA-Z0-9\s]+$/.test(value);
+        }, "Only letters and characters are allowed.");
+
+        $.validator.addMethod("alphaNumeric", function (value, element) {
+            return this.optional(element) || /^[a-zA-Z0-9]+$/.test(value);
+        }, "Only alphanumeric characters are allowed.");
+
+        $.validator.addMethod("phoneLength", function (value, element) {
+            return this.optional(element) || value.length === 10;
+        }, "Phone number must be 10 digits.");
+
+        $.validator.addMethod("validPassword", function (value, element) {
+                return this.optional(element) || /^(?=.*\d)(?=.*[a-zA-Z]).{8,}$/.test(value);
+            }, "Password must be at least 8 characters long and include both letters and numbers");
+
+        $("#myForm").validate({
+            rules: {
+                name: {
+                    required: true,
+                    lettersAndCharacters: true
+                },
+                email: {
+                    required: true,
+                    email: true
+                },
+                phone: {
+                    required: true,
+                    digits: true,
+                    phoneLength: true
+                },
+                age: {
+                    required: true,
+                    digits: true
+                },
+                birth:{
+                    required:true
+                },
+                time:{
+                    required:true
+                },
+                country:{
+                    required:true
+                },
+                gender:{
+                    required:true
+                },
+                'hobbies[]':{
+                    required:true
+                },
+                location:{
+                    required:true
+                },
+            },
+            messages: {
+                name :{
+                    required:"please enter name"
+                },
+                email:{
+                    required:"please enter email"
+                },
+                phone:{
+                    required:"please enter number",
+                    digits:"only enter digits in this field"
+                },
+                age:{
+                    required:"please enter age",
+                    digits:"only enter digits in this field"
+                },
+                birth:{
+                    required:"please enter your birthDate"
+                },
+                time:{
+                    required:"please enter your birthTime"
+                },
+                country:{
+                    required:"please choose a country"
+                },
+                // password:{
+                //     required:"please enter password",
+                // },
+                gender:{
+                    required:"please select your gender"
+                },
+                'hobbies[]':{
+                    required:"please select your hobbie"
+                },
+                location:{
+                    required:"please select your location"
+                },
+            },
+            errorClass:'error',
+            errorElement:'span',
+            errorPlacement: function(error, element) {
+            if (element.attr('type') === 'checkbox' || element.attr('type') === 'radio') {
+                error.appendTo(element.closest('.input-box').find('.error-container'));
+            } else {
+                error.insertAfter(element);
+            }
+        },
+            submitHandler: function (form) {
+                    var data = new FormData(form);
+                    var url = "{{ route('formData') }}";
+                    var method = "POST";
+                    // Add or update data
+                    $.ajax({
+                        type: method,
+                        url: url,
+                        data: data,
+                        processData: false,
+                        contentType: false,
+                        success: function(response){
+                            Swal.fire(
+                                response.res === 'Data added successfully' ? 'Added' : 'Updated',
+                                response.res,
+                                'success',
+                            ).then((result) => {
+                                if(result.isConfirmed || result.isDismissed){
+                                    window.location.href = "{{url('/get-data')}}";
+                                }
+                            });
+                            $("#myForm")[0].reset();
+                        },
+                        error: function(e){
+                            console.error(e.responseText);
+                        }
+                    });
+                }
+            });
+
+            $('#inputLocation').on('input', function(){
+                updatePasswordValidation();
+            });
+
+            function updatePasswordValidation(){
+                var locationValue = $('#inputLocation').val();
+
+                if(locationValue !== ''){
+                    $('#myForm').rules("remove","password");
+                }
+                else{
+                    $("#myForm").rules("add",{
+                        password:{
+                            required:true,
+                            validPassword:true
+                        }
+                    });
+                }
+            }
+            updatePasswordValidation();
+        });
+    </script>
+    <script src="https://cdn.jsdelivr.net/jquery.validation/1.16.0/jquery.validate.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/js/bootstrap.bundle.min.js" integrity="sha384-YvpcrYf0tY3lHB60NNkmXc5s9fDVZLESaAA55NDzOxhy9GkcIdslK1eN7N6jIeHz" crossorigin="anonymous"></script>
+</body>
+</html>
+
+
+
+      fetch
+      <!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>User Data</title>
+    <link rel="stylesheet" href="https://cdn.datatables.net/buttons/3.0.1/css/buttons.dataTables.css">
+    <script src="https://ajax.googleapis.com/ajax/libs/jquery/3.7.1/jquery.min.js"></script>
+    <link rel="stylesheet" href="https://cdn.datatables.net/2.0.2/css/dataTables.dataTables.min.css">
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/css/bootstrap.min.css" rel="stylesheet"
+        integrity="sha384-QWTKZyjpPEjISv5WaRU9OFeRpok6YctnYmDr5pNlyT2bRjXh0JMhjY6hW+ALEwIH" crossorigin="anonymous">
+        <link rel="stylesheet" type="text/css" href="https://cdn.datatables.net/responsive/2.2.9/css/responsive.dataTables.min.css">
+<script type="text/javascript" charset="utf8" src="https://cdn.datatables.net/responsive/2.2.9/js/dataTables.responsive.min.js"></script>
+
+    <style>
+        @import url('https://fonts.googleapis.com/css2?family=Poppins:wght@300;400;500;600;700;800;900&display=swap');
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+            font-family: 'Poppins', sans-serif;
+        }
+
+        ::selection{
+            color:#2E5266FF;
+            background-color:#9FB1BCFF;
+        }
+        #showRecords th {
+            background-color: #333;
+            color: #fff;
+            font-weight: 300px;
+        }
+
+        body {
+            background-image: linear-gradient(to right, #fdfbfb, #d3d3d3);
+            background-repeat: no-repeat;
+            background-size: cover;
+            background-attachment: fixed;
+        }
+    </style>
+</head>
+
+<body>
+    <h1 style="display:flex;align-items:center;justify-content:center;color:#707070;" class="mt-4">Manage Data</h1>
+         <div class="text-right d-flex justify-content-end">
+            <a href="{{url('/form')}}"><button class="btn btn-primary mb-3 mr-2" style="margin-right:0;">Add Data</button></a>
+        </div>
+    <div class="dataTables_wrapper">
+        <table class='table table-striped table-sm text-center align-middle table-bordered' id='showRecords'>
+            <thead>
+                <tr>
+                    <th>Id</th>
+                    <th>Name</th>
+                    <th>Email</th>
+                    <th>Phone</th>
+                    <th>Age</th>
+                    <th>Hobbies</th>
+                    <th>Gender</th>
+                    <th>Country</th>
+                    <th>Image</th>
+                    <th>BirthDate</th>
+                    <th>BirthTime</th>
+                    <th>Actions</th>
+                </tr>
+            </thead>
+        </table>
+    </div>
+
+    <script src="https://cdn.datatables.net/2.0.2/js/dataTables.min.js"></script>
+    <script src="https://cdn.datatables.net/buttons/3.0.1/js/dataTables.buttons.js"></script>
+    <script src="https://cdn.datatables.net/buttons/3.0.1/js/buttons.dataTables.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/pdfmake/0.2.7/pdfmake.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/pdfmake/0.2.7/vfs_fonts.js"></script>
+    <script src="https://cdn.datatables.net/buttons/3.0.1/js/buttons.html5.min.js"></script>
+    <script src="https://cdn.datatables.net/buttons/3.0.1/js/buttons.print.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/js/bootstrap.bundle.min.js"
+        integrity="sha384-YvpcrYf0tY3lHB60NNkmXc5s9fDVZLESaAA55NDzOxhy9GkcIdslK1eN7N6jIeHz"
+        crossorigin="anonymous"></script>
+    <script src="https://cdn.jsdelivr.net/npm/sweetalert2@11"></script>
+    <script>
+        $(document).ready(function () {
+            var counter = 1;
+            var defaultOrder = [0,'asc'];
+            var table = $('#showRecords').DataTable({
+                ajax: "{{ route('fetchData') }}",
+                type: "GET",
+                dataSrc: "data",
+                responsive:true,
+                layout: {
+                    topStart: {
+                        buttons:[
+                            {
+                                extend: 'copy',
+                                className: 'btnCopy',
+                            },
+                            {
+                                extend: 'csv',
+                                className: 'btnCsv',
+                            },
+                            {
+                                extend: 'excel',
+                                className: 'btnExcel',
+                            },
+                            {
+                                extend: 'pdf',
+                                className: 'btnPdf',
+                            },
+                            {
+                                extend: 'print',
+                                className: 'btnPrint',
+                            },
+                        ],
+                    }
+                },
+                columns: [
+                    { data: 'id', title: 'ID' },
+                    { data: 'name', title: 'Name' },
+                    { data: 'email', title: 'Email' },
+                    { data: 'phone', title: 'Phone' },
+                    { data: 'age', title: 'Age' },
+                    { data: 'hobbies', title: 'Hobbies' },
+                    { data: 'gender', title: 'Gender' },
+                    { data: 'country', title: 'Country' },
+                    {
+                        data: 'image',
+                        title: 'Image',
+                        render: function (data, type, row, meta) {
+                            return '<img src="' + '{{ asset("storage/img") }}' + '/' + row.image +
+                                '" alt="image.jpg" width="78" height="78" style="border-radius:7px;object-fit:cover;">';
+                        }
+                    },
+                    { data: 'birth', title: 'BirthDate' },
+                    { data: 'time', title: 'BirthTime' },
+                    {
+                        data: 'actions',
+                        title: 'Actions',
+                        render: function (data, type, row, meta) {
+                            return '<a href="{{ url("form") }}/' + row.id +
+                                '"><button class="btn btn-success updateIcon me-2">Edit</button></a>' +
+                                '<button class="btn btn-danger deleteIcon" data-id="' + row.id + '">Delete</button>';
+                        }
+                    }
+                ],
+                processing: true,
+                serverSide: true,
+                searching: true,
+                lengthMenu: [5, 10, 15, 25],
+                pageLength: 5,
+                rowCallback: function (row, data, index) {
+                    $('td:eq(0)', row).html(counter);
+                    counter++;
+                },
+                error: function (xhr, error, thrown) {
+                    console.error("DataTables error:", error);
+                    console.error("XHR response:", xhr.responseText);
+                }
+            });
+
+
+            // Delete data
+            $(document).on("click", '.deleteIcon', function (e) {
+                e.preventDefault();
+                let id = $(this).data('id');
+                let row = $(this).closest('tr');
+                Swal.fire({
+                    title: "Are you sure?",
+                    text: "You won't be able to revert this!",
+                    icon: "warning",
+                    showCancelButton: true,
+                    confirmButtonColor: "#3085d6",
+                    cancelButtonColor: "#d33",
+                    confirmButtonText: "Yes, delete it!"
+                }).then((result) => {
+                    if (result.isConfirmed) {
+                        $.ajax({
+                            url: "{{ route('deleteData') }}",
+                            type: "GET",
+                            data: {
+                                id: id,
+                                _token: '{{ csrf_token() }}',
+                            },
+                            success: function (res) {
+                                Swal.fire(
+                                    'Deleted',
+                                    'Record has been deleted',
+                                    'success'
+                                );
+                                table.row(row).remove().draw();
+                            },
+                            error: function (err) {
+                                console.error(err.responseText);
+                            }
+                        });
+                    }
+                });
+            });
+        });
+    </script>
+</body>
+
+</html>
+
+
+      
